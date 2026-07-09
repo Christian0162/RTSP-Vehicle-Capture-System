@@ -1,0 +1,7 @@
+# Environment variables
+.env
+
+# YOLO model files
+*.pt
+
+screenshots/*
