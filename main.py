@@ -23,7 +23,7 @@ RTSP_PORT = os.getenv("RTSP_PORT", "554")
 RTSP_CODEC = os.getenv("RTSP_CODEC", "h265").lower()
 PROCESS_EVERY_N_FRAMES = max(1, int(os.getenv("PROCESS_EVERY_N_FRAMES", "1")))
 ROI_START_RATIO = float(os.getenv("ROI_START_RATIO", "0.33"))
-CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.50"))
+CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.40"))
 
 STREAM_URL = f"rtsp://{RTSP_USERNAME}:{RTSP_PASSWORD}@{RTSP_IP}:{RTSP_PORT}/Streaming/Channels/{RTSP_CHANNEL}"
 
@@ -31,7 +31,7 @@ os.makedirs("screenshots", exist_ok=True)
 
 window_name = "YOLO Vehicle Auto Screenshot"
 
-cooldown_seconds = 5
+cooldown_seconds = 3
 last_screenshot_time = 0
 reconnect_delay_seconds = 0.25
 max_reconnect_attempts = 5
