@@ -51,6 +51,9 @@ RTSP_IP=192.168.1.100
 RTSP_CHANNEL=1
 RTSP_PORT=554
 RTSP_CODEC=h265
+PROCESS_EVERY_N_FRAMES=1
+ROI_START_RATIO=0.33
+CONFIDENCE_THRESHOLD=0.50
 ```
 
 ### Environment Variables
@@ -61,6 +64,9 @@ RTSP_CODEC=h265
 - `RTSP_CHANNEL` - RTSP channel number, such as `1`
 - `RTSP_PORT` - usually `554`
 - `RTSP_CODEC` - preferred codec for the stream, `h265` by default, `h264` if your stream works better with H.264
+- `PROCESS_EVERY_N_FRAMES` - process every Nth frame to reduce load, `1` means every frame
+- `ROI_START_RATIO` - top boundary of the trigger area as a fraction of frame height
+- `CONFIDENCE_THRESHOLD` - minimum confidence needed before a detection counts
 
 ## Run
 

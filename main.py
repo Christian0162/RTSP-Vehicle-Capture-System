@@ -2,6 +2,7 @@ from ultralytics import YOLO
 import cv2
 import os
 import time
+import threading
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -20,6 +21,9 @@ RTSP_IP = os.getenv("RTSP_IP")
 RTSP_CHANNEL = os.getenv("RTSP_CHANNEL", "101")
 RTSP_PORT = os.getenv("RTSP_PORT", "554")
 RTSP_CODEC = os.getenv("RTSP_CODEC", "h265").lower()
+PROCESS_EVERY_N_FRAMES = max(1, int(os.getenv("PROCESS_EVERY_N_FRAMES", "1")))
+ROI_START_RATIO = float(os.getenv("ROI_START_RATIO", "0.33"))
+CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.50"))
 
 STREAM_URL = f"rtsp://{RTSP_USERNAME}:{RTSP_PASSWORD}@{RTSP_IP}:{RTSP_PORT}/Streaming/Channels/{RTSP_CHANNEL}"
 
@@ -115,120 +119,148 @@ def connect_camera():
     return None
 
 
-cap = connect_camera()
-if cap is None:
-    raise RuntimeError("Unable to connect to RTSP camera.")
+class FrameGrabber:
+    def __init__(self):
+        self._frame = None
+        self._frame_time = 0.0
+        self._frame_id = 0
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._ready_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
 
-print("Starting vehicle detection...")
-print("Press Q to stop.")
+    def start(self):
+        self._thread.start()
 
-failed_reads = 0
-max_failed_reads = 1
+    def stop(self):
+        self._stop_event.set()
+        self._thread.join(timeout=2)
 
-while True:
-    ret, frame = cap.read()
+    def read(self):
+        with self._lock:
+            if self._frame is None:
+                return None, 0.0, 0
+            return self._frame.copy(), self._frame_time, self._frame_id
 
-    if not ret or frame is None:
-        failed_reads += 1
-        print(f"Cannot read video stream. Failed count: {failed_reads}")
+    def _store_frame(self, frame):
+        with self._lock:
+            self._frame = frame
+            self._frame_time = time.time()
+            self._frame_id += 1
+        self._ready_event.set()
 
-        if failed_reads >= max_failed_reads:
-            print("Reconnecting camera...")
+    def _run(self):
+        while not self._stop_event.is_set():
+            cap = connect_camera()
+            if cap is None:
+                time.sleep(reconnect_delay_seconds)
+                continue
+
+            while not self._stop_event.is_set():
+                ret, frame = cap.read()
+
+                if not ret or frame is None:
+                    print("Frame read failed. Reconnecting camera...")
+                    break
+
+                self._store_frame(frame)
 
             cap.release()
             time.sleep(reconnect_delay_seconds)
 
-            cap = connect_camera()
-            if cap is None:
-                raise RuntimeError("Unable to reconnect RTSP camera.")
-            failed_reads = 0
-        else:
-            # Short pause to avoid a hot loop while the camera is dropping frames.
-            time.sleep(reconnect_delay_seconds)
 
-        continue
+grabber = FrameGrabber()
+grabber.start()
 
-    failed_reads = 0
+if not grabber._ready_event.wait(timeout=15):
+    grabber.stop()
+    raise RuntimeError("Unable to connect to RTSP camera.")
 
-    height, width, _ = frame.shape
+print("Starting vehicle detection...")
+print("Press Q to stop.")
+print(f"Processing every {PROCESS_EVERY_N_FRAMES} frame(s).")
 
-    # Trigger area: lower-left / left 66%
-    ROI_X1 = 0
-    ROI_Y1 = int(height * 0.33)
-    ROI_X2 = int(width * 2 / 3)
-    ROI_Y2 = height
+last_processed_frame_id = 0
 
-    results = model(frame, verbose=False)
+try:
+    while True:
+        frame, frame_time, frame_id = grabber.read()
 
-    vehicle_detected = False
-    detected_vehicle = None
+        if frame is None:
+            time.sleep(0.01)
+            continue
 
-    for result in results:
-        for box in result.boxes:
-            class_id = int(box.cls[0])
-            class_name = model.names[class_id]
-            confidence = float(box.conf[0])
+        height, width, _ = frame.shape
 
-            if class_name in VEHICLE_CLASSES and confidence >= 0.50:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                label = f"{class_name} {confidence:.2f}"
+        # Trigger area: lower-left / left 66%
+        ROI_X1 = 0
+        ROI_Y1 = int(height * ROI_START_RATIO)
+        ROI_X2 = int(width * 2 / 3)
+        ROI_Y2 = height
 
-                center_x = int((x1 + x2) / 2)
-                center_y = int((y1 + y2) / 2)
+        vehicle_detected = False
+        detected_vehicle = None
 
-                inside_roi = (
-                    ROI_X1 <= center_x <= ROI_X2 and
-                    ROI_Y1 <= center_y <= ROI_Y2
-                )
+        should_process = (
+            frame_id != last_processed_frame_id and
+            frame_id % PROCESS_EVERY_N_FRAMES == 0
+        )
 
-                # Draw green detection box
-                # cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        if should_process:
+            results = model(frame, verbose=False)
+            last_processed_frame_id = frame_id
 
-                # cv2.putText(
-                #     frame,
-                #     label,
-                #     (x1, y1 - 10),
-                #     cv2.FONT_HERSHEY_SIMPLEX,
-                #     0.7,
-                #     (0, 255, 0),
-                #     2
-                # )
+            for result in results:
+                for box in result.boxes:
+                    class_id = int(box.cls[0])
+                    class_name = model.names[class_id]
+                    confidence = float(box.conf[0])
 
-                # # Draw center point
-                # cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+                    if class_name in VEHICLE_CLASSES and confidence >= CONFIDENCE_THRESHOLD:
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        center_x = int((x1 + x2) / 2)
+                        center_y = int((y1 + y2) / 2)
 
-                if inside_roi:
-                    vehicle_detected = True
-                    detected_vehicle = class_name
+                        inside_roi = (
+                            ROI_X1 <= center_x <= ROI_X2 and
+                            ROI_Y1 <= center_y <= ROI_Y2
+                        )
 
-    # Draw trigger area
-    # cv2.rectangle(frame, (ROI_X1, ROI_Y1), (ROI_X2, ROI_Y2), (255, 0, 0), 2)
+                        if inside_roi:
+                            vehicle_detected = True
+                            detected_vehicle = class_name
+                            break
 
-    # cv2.putText(
-    #     frame,
-    #     "SCREENSHOT TRIGGER AREA",
-    #     (ROI_X1 + 20, ROI_Y1 + 40),
-    #     cv2.FONT_HERSHEY_SIMPLEX,
-    #     1,
-    #     (255, 0, 0),
-    #     2
-    # )
+                if vehicle_detected:
+                    break
 
-    current_time = time.time()
+        current_time = time.time()
 
-    if vehicle_detected and current_time - last_screenshot_time >= cooldown_seconds:
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"screenshots/{detected_vehicle}_{timestamp}.jpg"
+        if vehicle_detected and current_time - last_screenshot_time >= cooldown_seconds:
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            filename = f"screenshots/{detected_vehicle}_{timestamp}.jpg"
 
-        cv2.imwrite(filename, frame)
-        print(f"Vehicle detected. Screenshot saved: {filename}")
+            cv2.imwrite(filename, frame)
+            print(f"Vehicle detected. Screenshot saved: {filename}")
 
-        last_screenshot_time = current_time
+            last_screenshot_time = current_time
 
-    cv2.imshow(window_name, frame)
+        age_seconds = current_time - frame_time
+        if age_seconds > 2:
+            cv2.putText(
+                frame,
+                f"Stream delay: {age_seconds:.1f}s",
+                (20, 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 0, 255),
+                2
+            )
 
-    if cv2.waitKey(1) & 0xFF == ord("q"):
-        break
+        cv2.imshow(window_name, frame)
 
-cap.release()
-cv2.destroyAllWindows()
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+finally:
+    grabber.stop()
+    cv2.destroyAllWindows()
