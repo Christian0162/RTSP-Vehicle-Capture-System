@@ -238,7 +238,7 @@ try:
 
         if vehicle_detected and current_time - last_screenshot_time >= cooldown_seconds:
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            filename = f"screenshots/{detected_vehicle}_{timestamp}.jpg"
+            filename = f"screenshots/{detected_vehicle}_{timestamp}.png"
 
             cv2.imwrite(filename, frame)
             print(f"Vehicle detected. Screenshot saved: {filename}")
