@@ -13,7 +13,7 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 model = YOLO("yolov8n.pt")
 
-VEHICLE_CLASSES = ["car", "truck", "motorcycle"]
+VEHICLE_CLASSES = ["car", "truck"]
 
 RTSP_USERNAME = os.getenv("RTSP_USERNAME")
 RTSP_PASSWORD = os.getenv("RTSP_PASSWORD")
@@ -22,7 +22,7 @@ RTSP_CHANNEL = os.getenv("RTSP_CHANNEL", "101")
 RTSP_PORT = os.getenv("RTSP_PORT", "554")
 RTSP_CODEC = os.getenv("RTSP_CODEC", "h265").lower()
 PROCESS_EVERY_N_FRAMES = max(1, int(os.getenv("PROCESS_EVERY_N_FRAMES", "1")))
-ROI_START_RATIO = float(os.getenv("ROI_START_RATIO", "0.33"))
+ROI_START_RATIO = float(os.getenv("ROI_START_RATIO", "0.15"))
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.40"))
 
 STREAM_URL = f"rtsp://{RTSP_USERNAME}:{RTSP_PASSWORD}@{RTSP_IP}:{RTSP_PORT}/Streaming/Channels/{RTSP_CHANNEL}"
@@ -31,7 +31,7 @@ os.makedirs("screenshots", exist_ok=True)
 
 window_name = "YOLO Vehicle Auto Screenshot"
 
-cooldown_seconds = 3
+cooldown_seconds = 2
 last_screenshot_time = 0
 reconnect_delay_seconds = 0.25
 max_reconnect_attempts = 5
@@ -235,6 +235,25 @@ try:
                     break
 
         current_time = time.time()
+
+        # Draw the ROI so it is easy to see where detections count.
+        # roi_color = (0, 255, 0) if vehicle_detected else (255, 200, 0)
+        # cv2.rectangle(
+        #     frame,
+        #     (ROI_X1, ROI_Y1),
+        #     (ROI_X2, ROI_Y2),
+        #     roi_color,
+        #     2
+        # )
+        # cv2.putText(
+        #     frame,
+        #     f"ROI: top {int(ROI_START_RATIO * 100)}%",
+        #     (ROI_X1 + 10, max(30, ROI_Y1 - 10)),
+        #     cv2.FONT_HERSHEY_SIMPLEX,
+        #     0.7,
+        #     roi_color,
+        #     2
+        # )
 
         if vehicle_detected and current_time - last_screenshot_time >= cooldown_seconds:
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
