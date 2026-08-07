@@ -11,9 +11,9 @@ load_dotenv()
 # Force RTSP over TCP for more stable stream
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
-model = YOLO("yolov8n.pt")
+model = YOLO("runs/detect/train/weights/best.pt")
 
-VEHICLE_CLASSES = ["car", "truck"]
+CLASSES = ["box"]
 
 RTSP_USERNAME = os.getenv("RTSP_USERNAME")
 RTSP_PASSWORD = os.getenv("RTSP_PASSWORD")
@@ -22,14 +22,16 @@ RTSP_CHANNEL = os.getenv("RTSP_CHANNEL", "101")
 RTSP_PORT = os.getenv("RTSP_PORT", "554")
 RTSP_CODEC = os.getenv("RTSP_CODEC", "h265").lower()
 PROCESS_EVERY_N_FRAMES = max(1, int(os.getenv("PROCESS_EVERY_N_FRAMES", "1")))
-ROI_START_RATIO = float(os.getenv("ROI_START_RATIO", "0.15"))
+ROI_START_RATIO = float(os.getenv("ROI_START_RATIO", "0.05"))
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.40"))
 
 STREAM_URL = f"rtsp://{RTSP_USERNAME}:{RTSP_PASSWORD}@{RTSP_IP}:{RTSP_PORT}/Streaming/Channels/{RTSP_CHANNEL}"
 
 os.makedirs("screenshots", exist_ok=True)
 
-window_name = "YOLO Vehicle Auto Screenshot"
+window_name = "RTSP Capture"
+DISPLAY_WIDTH = 1280
+DISPLAY_HEIGHT = 720
 
 cooldown_seconds = 2
 last_screenshot_time = 0
@@ -38,7 +40,7 @@ max_reconnect_attempts = 5
 PREFERRED_BACKENDS = ("gstreamer", "ffmpeg")
 
 cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-cv2.resizeWindow(window_name, 1280, 720)
+cv2.resizeWindow(window_name, DISPLAY_WIDTH, DISPLAY_HEIGHT)
 
 
 def normalize_codec(codec_name):
@@ -78,6 +80,29 @@ def open_capture(backend_name, codec_name):
         return cv2.VideoCapture(build_gstreamer_pipeline(codec_name), cv2.CAP_GSTREAMER)
 
     return cv2.VideoCapture(STREAM_URL, cv2.CAP_FFMPEG)
+
+
+def fit_frame_to_window(frame):
+    frame_height, frame_width = frame.shape[:2]
+    scale = min(DISPLAY_WIDTH / frame_width, DISPLAY_HEIGHT / frame_height)
+    scaled_width = int(frame_width * scale)
+    scaled_height = int(frame_height * scale)
+
+    resized = cv2.resize(frame, (scaled_width, scaled_height), interpolation=cv2.INTER_AREA)
+    top = (DISPLAY_HEIGHT - scaled_height) // 2
+    bottom = DISPLAY_HEIGHT - scaled_height - top
+    left = (DISPLAY_WIDTH - scaled_width) // 2
+    right = DISPLAY_WIDTH - scaled_width - left
+
+    return cv2.copyMakeBorder(
+        resized,
+        top,
+        bottom,
+        left,
+        right,
+        cv2.BORDER_CONSTANT,
+        value=(0, 0, 0)
+    )
 
 
 def connect_camera():
@@ -176,7 +201,7 @@ if not grabber._ready_event.wait(timeout=15):
     grabber.stop()
     raise RuntimeError("Unable to connect to RTSP camera.")
 
-print("Starting vehicle detection...")
+print("Starting detection...")
 print("Press Q to stop.")
 print(f"Processing every {PROCESS_EVERY_N_FRAMES} frame(s).")
 
@@ -192,11 +217,11 @@ try:
 
         height, width, _ = frame.shape
 
-        # Trigger area: lower-left / left 66%
-        ROI_X1 = 0
-        ROI_Y1 = int(height * ROI_START_RATIO)
-        ROI_X2 = int(width * 2 / 3)
-        ROI_Y2 = height
+        # Trigger area: centered lower 66%
+        ROI_X1 = int(width / 4)
+        ROI_Y1 = int(height * 0.20)
+        ROI_X2 = int(width * 5 / 6)
+        ROI_Y2 = int(height * 0.50)
 
         vehicle_detected = False
         detected_vehicle = None
@@ -216,7 +241,7 @@ try:
                     class_name = model.names[class_id]
                     confidence = float(box.conf[0])
 
-                    if class_name in VEHICLE_CLASSES and confidence >= CONFIDENCE_THRESHOLD:
+                    if class_name in CLASSES and confidence >= CONFIDENCE_THRESHOLD:
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
                         center_x = int((x1 + x2) / 2)
                         center_y = int((y1 + y2) / 2)
@@ -277,6 +302,9 @@ try:
             )
 
         cv2.imshow(window_name, frame)
+
+        if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+            break
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break

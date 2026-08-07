@@ -1,22 +1,19 @@
 # RTSP Vehicle Capture System
 
-This project connects to an RTSP camera feed, runs YOLOv8 detection on each frame, and saves a screenshot when a vehicle is detected inside the trigger area.
+This project connects to an RTSP camera feed, runs a YOLO model on each frame, and saves screenshots when the trained object is detected inside the region of interest.
+
+The project also includes simple training and testing scripts so you can train your own YOLO model before using it with the live RTSP capture app.
 
 ## Features
 
 - RTSP camera capture
-- YOLOv8 vehicle detection
-- Screenshot capture on trigger
+- YOLO detection with Ultralytics
+- Custom model training with `train.py`
+- Image prediction test with `test.py`
+- Screenshot capture on detection
 - Cooldown to prevent repeated screenshots
 - Reconnect handling for dropped streams
 - GStreamer-first capture attempt with FFmpeg fallback
-
-## How It Works
-
-1. The app connects to the RTSP stream from your camera or NVR.
-2. Each frame is passed into YOLOv8.
-3. If a detected vehicle is inside the region of interest, the frame is saved as a screenshot.
-4. If the stream drops, the app tries to reconnect.
 
 ## Requirements
 
@@ -26,7 +23,8 @@ You will also need:
 
 - Python 3.10 or newer
 - A working RTSP camera or NVR stream
-- `yolov8n.pt` available in the project folder or downloadable by Ultralytics
+- A YOLO dataset with a `data.yaml` file
+- `yolo11n.pt` in the project folder, or downloadable by Ultralytics
 
 If you want to use the GStreamer backend, you also need GStreamer installed on your system.
 
@@ -65,10 +63,105 @@ CONFIDENCE_THRESHOLD=0.50
 - `RTSP_PORT` - usually `554`
 - `RTSP_CODEC` - preferred codec for the stream, `h265` by default, `h264` if your stream works better with H.264
 - `PROCESS_EVERY_N_FRAMES` - process every Nth frame to reduce load, `1` means every frame
-- `ROI_START_RATIO` - top boundary of the trigger area as a fraction of frame height
+- `ROI_START_RATIO` - top boundary of the detection area as a fraction of frame height
 - `CONFIDENCE_THRESHOLD` - minimum confidence needed before a detection counts
 
-## Run
+## Training A Model
+
+Training is handled by `train.py`.
+
+Open `train.py` and update the dataset path:
+
+```python
+data=r"C:\Users\Big Blue Logistics\Desktop\New folder\data.yaml"
+```
+
+That file should point to your YOLO dataset configuration. The dataset should already be labeled and split into training and validation images.
+
+Then run:
+
+```bash
+python train.py
+```
+
+The current training script starts from `yolo11n.pt`:
+
+```python
+model = YOLO("yolo11n.pt")
+```
+
+It trains for 100 epochs at image size 640:
+
+```python
+model.train(
+    data=r"C:\Users\Big Blue Logistics\Desktop\New folder\data.yaml",
+    epochs=100,
+    imgsz=640,
+)
+```
+
+When training finishes, Ultralytics saves the trained model here:
+
+```text
+runs/detect/train/weights/best.pt
+```
+
+It also saves the last checkpoint here:
+
+```text
+runs/detect/train/weights/last.pt
+```
+
+## Resuming Training
+
+If training stops before it finishes, use the resume block in `train.py`.
+
+Comment out the normal training section and uncomment:
+
+```python
+model = YOLO("runs/detect/train/weights/last.pt")
+model.train(resume=True)
+```
+
+Then run:
+
+```bash
+python train.py
+```
+
+## Testing The Trained Model
+
+After training, run `test.py` to check the trained weights against a test image:
+
+```bash
+python test.py
+```
+
+The test script loads:
+
+```text
+runs/detect/train/weights/best.pt
+```
+
+and runs prediction on:
+
+```text
+test1.jpg
+```
+
+It prints the number of detected boxes and each detection name with its confidence. Ultralytics also saves the predicted image output under the `runs/` folder.
+
+To test a different image, edit this line in `test.py`:
+
+```python
+source="test1.jpg"
+```
+
+## Using The Trained Model In The RTSP App
+
+The live capture app is `main.py`.
+
+Run it with:
 
 ```bash
 python main.py
@@ -76,35 +169,40 @@ python main.py
 
 Press `Q` to quit the application.
 
-## Screenshot Logic
+After training your custom model, update the YOLO model path in `main.py` so it uses your trained weights:
 
-Screenshots are saved only when:
+```python
+model = YOLO("runs/detect/train/weights/best.pt")
+```
 
-- YOLO detects a vehicle class
-- the detection is inside the configured region of interest
-- the cooldown period has expired
+Then make sure the detection name in `main.py` matches the class name from your dataset:
 
-The current trigger classes are:
+```python
+CLASSES = ["box"]
+```
 
-- `car`
-- `truck`
-- `motorcycle`
-
-## Notes About Vehicle Labels
-
-YOLO does not usually label `SUV` or `sedan` separately.
-
-Those are typically detected as:
-
-- `car`
-
-So if your camera sees an SUV or sedan, the app will usually treat it as a car and save a screenshot if it is in the trigger area.
+Use the class name that appears in your training dataset and in the `test.py` output.
 
 ## Output
 
 Saved screenshots are written to the `screenshots/` folder.
 
+Training and prediction results are written to the `runs/` folder.
+
 ## Troubleshooting
+
+### Training cannot find the dataset
+
+- Check that the `data.yaml` path in `train.py` is correct
+- Make sure the path points to the YAML file, not just the dataset folder
+- Confirm that the image and label paths inside `data.yaml` are valid
+
+### The model detects nothing in `test.py`
+
+- Try lowering the confidence value in `test.py`
+- Make sure the test image contains the object you trained on
+- Check that the dataset labels are correct
+- Train for more epochs if the model has not learned enough yet
 
 ### Stream keeps disconnecting
 
@@ -135,7 +233,10 @@ If your OpenCV build does not support GStreamer, the app will fall back to FFmpe
 
 ## Project Files
 
-- `main.py` - main application
+- `main.py` - live RTSP detection and screenshot capture app
+- `train.py` - trains a custom YOLO model
+- `test.py` - tests the trained model on a still image
 - `requirements.txt` - Python dependencies
 - `.env` - camera configuration
+- `runs/` - training and prediction outputs
 - `screenshots/` - captured images

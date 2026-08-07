@@ -5,3 +5,7 @@
 *.pt
 
 screenshots/*
+
+runs/*
+
+__pycache__
