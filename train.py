@@ -4,7 +4,7 @@ def main():
     #actual training
     model = YOLO("yolo11n.pt")
     model.train(
-        data=r"C:\Users\Big Blue Logistics\Desktop\New folder\data.yaml",
+        data=r"C:\Users\Big Blue Logistics\Downloads\New folder\project-6-at-2026-08-10-06-45-fbbd56a0\data.yaml",
         epochs=100,
         imgsz=640,
     )
